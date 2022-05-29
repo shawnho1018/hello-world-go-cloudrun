@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 )
 
 // templateData provides template parameters.
@@ -18,6 +21,41 @@ var (
 	data templateData
 	tmpl *template.Template
 )
+
+func getIP(r *http.Request) (string, error) {
+	//Get IP from the X-REAL-IP header
+	ip := r.Header.Get("X-REAL-IP")
+	//Get IP from X-FORWARDED-FOR header
+	ips := r.Header.Get("X-FORWARDED-FOR")
+	//Get IP from RemoteAddr
+	ipr, _, err := net.SplitHostPort(r.RemoteAddr)
+	log.Printf("X-REAL, X-Forward, Remote: %s, %s, %s", ip, ips, ipr)
+	netIP := net.ParseIP(ip)
+	if netIP != nil {
+		log.Printf("X-REAL-IP: %s", netIP)
+		return ip, nil
+	}
+	splitIps := strings.Split(ips, ",")
+	for _, ip := range splitIps {
+		netIP := net.ParseIP(ip)
+		if netIP != nil {
+			log.Printf("X-FORWADER-IP: %s", netIP)
+			return ip, nil
+		}
+	}
+
+	//Get IP from RemoteAddr
+	//ipr, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return "", err
+	}
+	netIP = net.ParseIP(ipr)
+	if netIP != nil {
+		log.Printf("REMOTE-IP: %s", netIP)
+		return ipr, nil
+	}
+	return "", fmt.Errorf("No valid ip found")
+}
 
 func main() {
 	// Initialize template parameters.
@@ -40,6 +78,8 @@ func main() {
 
 	// Define HTTP server.
 	http.HandleFunc("/", helloRunHandler)
+	http.HandleFunc("/hostname", hostName)
+	http.HandleFunc("/ip", whatisMyIP)
 
 	fs := http.FileServer(http.Dir("./assets"))
 	http.Handle("/assets/", http.StripPrefix("/assets/", fs))
@@ -65,4 +105,24 @@ func helloRunHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("template.Execute: %v", err)
 		http.Error(w, msg, http.StatusInternalServerError)
 	}
+}
+
+func hostName(w http.ResponseWriter, r *http.Request) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	w.WriteHeader(200)
+	w.Write([]byte(hostname))
+}
+
+func whatisMyIP(w http.ResponseWriter, r *http.Request) {
+	ip, err := getIP(r)
+	if err != nil {
+		w.WriteHeader(400)
+		w.Write([]byte("No valid ip"))
+	}
+	w.WriteHeader(200)
+	w.Write([]byte(ip))
 }
